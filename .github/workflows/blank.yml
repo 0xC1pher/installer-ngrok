@@ -1,0 +1,63 @@
+name: Lando CI with Ngrok Tunnel
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  LANDO_SITE_URL: "http://mysite.lndo.site"  # Ajustar con tu URL de Lando
+  NGROK_REGION: "us"                         # Opciones: us, eu, ap, au, sa, jp, in
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Lando
+        uses: lando/setup-lando@v3
+        with:
+          version: 'latest'
+          
+      - name: Start Lando environment
+        run: |
+          lando start
+          lando info
+
+      - name: Install ngrok
+        run: |
+          wget https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip -O /tmp/ngrok.zip
+          unzip -o /tmp/ngrok.zip -d /tmp/
+          sudo mv /tmp/ngrok /usr/local/bin/
+          ngrok --version
+
+      - name: Configure ngrok auth
+        run: ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+        
+      - name: Start ngrok tunnel and get URL
+        id: ngrok
+        run: |
+          ngrok http --region ${{ env.NGROK_REGION }} --log stdout 80 > /dev/null &
+          sleep 5  # Esperar inicialización
+          NGROK_URL=$(curl -s localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          echo "Public URL: $NGROK_URL"
+          echo "NGROK_PUBLIC_URL=$NGROK_URL" >> $GITHUB_ENV
+          echo "url=$NGROK_URL" >> $GITHUB_OUTPUT
+
+      - name: Run tests through ngrok
+        run: |
+          echo "Running tests against: ${{ env.NGROK_PUBLIC_URL }}"
+          # Ejemplo de test con curl - ajustar según necesidades
+          curl -sI ${{ env.NGROK_PUBLIC_URL }} | grep "HTTP/1.1 200"
+          # Agregar aquí otros comandos de test
+
+      - name: Stop ngrok and Lando (cleanup)
+        if: always()
+        run: |
+          pkill ngrok
+          lando stop
